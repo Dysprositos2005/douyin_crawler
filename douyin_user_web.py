@@ -1,109 +1,107 @@
-import time
+import requests
 import csv
+import pandas as pd
+from urllib.parse import urlparse
 from datetime import datetime
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.common.action_chains import ActionChains
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+import re
 
-# ======================
-# 可调参数
-SCROLL_TIMES = 10
-SCROLL_PAUSE = 2
+# 用户配置
+CSV_PATH = r'C:\Users\18394\Desktop\douyin_crawler\data\地理_search\results_20250630_154315.csv'
+with open(r'C:\Users\18394\Desktop\cookie.txt', 'r') as f:
+    COOKIE = f.readline().strip()
 
-# ======================
-# 启动 Chrome
-options = Options()
-options.add_argument("--start-maximized")
-# options.add_argument("--headless")  # 如果需要无头模式就取消注释
-options.add_argument("--disable-blink-features=AutomationControlled")
+headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+    'Cookie': COOKIE,
+    'Referer': 'https://www.douyin.com/'
+}
 
-# 替换为你的 ChromeDriver 路径
-driver_path = r"C:\Users\18394\.cache\selenium\chromedriver\win64\134.0.6998.88\chromedriver.exe"
-driver = webdriver.Chrome(service=Service(driver_path), options=options)
 
-# ======================
-# 输入关键词
-keyword = input("请输入搜索关键词：")
-search_url = f"https://www.douyin.com/search/{keyword}"
-driver.get(search_url)
+def fetch_user_info_html(sec_user_id):
+    """直接访问用户主页 HTML 并解析"""
+    url = f'https://www.douyin.com/user/{sec_user_id}'
 
-wait = WebDriverWait(driver, 15)
-
-# ======================
-# 等页面加载
-print(f"👉 打开搜索页：{search_url}")
-time.sleep(5)
-
-# ======================
-# 模拟多次下滑
-for i in range(SCROLL_TIMES):
-    print(f"👉 正在滑动第 {i + 1} 次...")
-    ActionChains(driver).send_keys(Keys.PAGE_DOWN).perform()
-    time.sleep(SCROLL_PAUSE)
-
-print(f"【INFO】开始提取搜索结果...")
-
-# ======================
-# 自己对照抖音网页检查选择器！
-# 下面示例选择器是演示，请替换为真实类名！
-# 例如：抖音搜索视频卡片外层 div 的 class
-card_selector = "div.xgplayer"   # <<< 替换为真实类名
-
-cards = driver.find_elements(By.CSS_SELECTOR, card_selector)
-print(f"共找到卡片数：{len(cards)}")
-
-results = []
-
-for idx, card in enumerate(cards, 1):
     try:
-        # 自己对照抖音页面修改选择器
-        # 假设外层是 div.xgplayer, 内部视频链接是 <a>，作者是 <span> 或 <p>
-        link_element = card.find_element(By.TAG_NAME, "a")
-        link = link_element.get_attribute("href")
-        
-        # 假设标题在卡片 text 中第 1 行
-        title = card.text.split("\n")[0]
-        
-        author = ""
-        try:
-            author_element = card.find_element(By.CSS_SELECTOR, "p.author-name")  # 替换
-            author = author_element.text
-        except:
-            pass
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        html = resp.text
 
-        print(f"[{idx}] {title} | {author} | {link}")
-        results.append({
-            "title": title,
-            "author": author,
-            "link": link
-        })
+        # 用正则匹配作品数和获赞数
+        aweme_count = re.search(r'"aweme_count":(\d+)', html)
+        total_favorited = re.search(r'"total_favorited":(\d+)', html)
+
+        # 主页里一般没有收藏夹数，这里就写未知
+        return {
+            'address': '未知',
+            'age': '未知',
+            'aweme_count': aweme_count.group(1) if aweme_count else '未知',
+            'total_favorited': total_favorited.group(1) if total_favorited else '未知',
+            'favoriting_count': '未知'
+        }
+
     except Exception as e:
-        print(f"[跳过] 报错：{e}")
-        continue
+        print(f"解析用户主页失败: {str(e)}")
+        return {
+            'address': '未知',
+            'age': '未知',
+            'aweme_count': '未知',
+            'total_favorited': '未知',
+            'favoriting_count': '未知'
+        }
 
-# ======================
-# 保存 CSV
-if not results:
-    print("❌ 没有提取到任何结果，请检查选择器是否正确！")
-else:
-    dt = datetime.now().strftime("%Y%m%d_%H%M%S")
-    save_dir = f"./data/{keyword}_selenium"
-    save_path = f"{save_dir}/results_{dt}.csv"
 
-    import os
-    os.makedirs(save_dir, exist_ok=True)
+def extract_sec_user_id(url):
+    """从主页链接提取 sec_user_id"""
+    parsed = urlparse(url)
+    if parsed.path.startswith('/user/'):
+        return parsed.path.split('/user/')[-1]
+    return None
 
-    with open(save_path, "w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.DictWriter(f, fieldnames=["title", "author", "link"])
-        writer.writeheader()
-        writer.writerows(results)
 
-    print(f"✅ 已保存到：{save_path} | 共 {len(results)} 条")
+if __name__ == "__main__":
+    try:
+        df = pd.read_csv(CSV_PATH, encoding='utf-8')
+        df.columns = df.columns.str.strip().str.replace('\ufeff', '')
+        urls = df['author_homepage'].tolist()
+    except Exception as e:
+        print(f"读取CSV文件失败: {str(e)}")
+        exit()
 
-# 关闭浏览器
-driver.quit()
+    sec_user_ids = []
+    for url in urls:
+        if not pd.isna(url):
+            user_id = extract_sec_user_id(url)
+            if user_id:
+                sec_user_ids.append(user_id)
+            else:
+                print(f"无效链接格式: {url}")
+
+    all_data = []
+
+    for sec_user_id in sec_user_ids:
+        print(f"\n正在采集用户 {sec_user_id}...")
+
+        user_info = fetch_user_info_html(sec_user_id)
+
+        user_record = {
+            'user_id': sec_user_id,
+            'address': user_info['address'],
+            'age': user_info['age'],
+            'aweme_count': user_info['aweme_count'],
+            'total_favorited': user_info['total_favorited'],
+            'favoriting_count': user_info['favoriting_count']
+        }
+        all_data.append(user_record)
+
+    if all_data:
+        with open('douyin_summary.csv', 'w', newline='', encoding='utf-8-sig') as f:
+            fieldnames = [
+                'user_id', 'address', 'age',
+                'aweme_count', 'total_favorited', 'favoriting_count'
+            ]
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(all_data)
+        print(f"\n数据采集完成！共获取 {len(all_data)} 条记录，已保存到 douyin_summary.csv")
+    else:
+        print("\n未获取到任何有效数据")

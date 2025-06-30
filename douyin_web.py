@@ -15,6 +15,7 @@ COOKIE_FILE = r'C:\Users\18394\Desktop\cookie.txt'
 SEARCH_URL = "https://www.douyin.com/aweme/v1/web/search/item/"
 TEST_MODE = True  # 测试签名模式（实际项目应用真实签名）
 
+
 def common(url, params, headers):
     """签名生成函数示例（测试模式用固定签名）"""
     if TEST_MODE:
@@ -25,7 +26,7 @@ def common(url, params, headers):
         })
         return signed_params, headers
     else:
-        # 真实签名逻辑
+        # 真实签名逻辑（调用签名服务）
         pass
 
 
@@ -38,12 +39,15 @@ async def safe_fetch(client, url, params, headers):
         print(f"\n[请求异常] {type(e).__name__}: {str(e)}")
         return None
 
+
 async def fetch_search_results(keyword, max_pages):
     cookie = open(COOKIE_FILE, encoding='utf-8').read().strip()
 
     user_agents = [
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.1 Safari/605.1.15",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     ]
 
     async with httpx.AsyncClient() as client:
@@ -70,7 +74,7 @@ async def fetch_search_results(keyword, max_pages):
                 }
 
                 if search_id:
-                    params["search_id"] = search_id  # 关键翻页参数
+                    params["search_id"] = search_id
 
                 headers = {
                     "Cookie": cookie,
@@ -85,14 +89,12 @@ async def fetch_search_results(keyword, max_pages):
                     print("\n[提示] 返回空数据，可能到头或被限流。")
                     break
 
-                # 第一次请求保存 search_id
                 if page_count == 0:
                     search_id = data.get("extra", {}).get("logid")
                     if not search_id:
                         print("[错误] 无法获取 search_id，可能接口已更新")
                         break
 
-                # 解析结果
                 items = data.get("data", [])
                 if not items:
                     print("[提示] 当前页无数据，可能到头。")
@@ -102,24 +104,36 @@ async def fetch_search_results(keyword, max_pages):
                     aweme = item.get("aweme_info")
                     if not aweme:
                         continue
+
                     text_extra = aweme.get("text_extra") or []
                     tags = [t["hashtag_name"] for t in text_extra if t.get("type") == 1]
+                    stats = aweme.get("statistics", {})
+
+                    video_id = aweme.get("aweme_id")
+                    author_info = aweme.get("author", {})
+
+                    sec_uid = author_info.get("sec_uid", "")
+                    homepage_url = f"https://www.douyin.com/user/{sec_uid}" if sec_uid else ""
 
                     results.append({
-                        "video_id": aweme.get("aweme_id"),
+                        "video_id": video_id,
                         "desc": aweme.get("desc", "")[:100],
-                        "author": aweme.get("author", {}).get("nickname"),
+                        "author": author_info.get("nickname"),
+                        "author_id": author_info.get("uid"),
+                        "author_homepage": homepage_url,
                         "create_time": datetime.fromtimestamp(aweme.get("create_time", 0)),
                         "tags": ", ".join(tags),
-                        "duration": aweme.get("duration", 0) // 1000
+                        "digg_count": stats.get("digg_count", 0),
+                        "comment_count": stats.get("comment_count", 0),
+                        "share_count": stats.get("share_count", 0),
+                        "video_url": f"https://www.douyin.com/video/{video_id}" if video_id else ""
                     })
 
-                # 翻页参数更新
                 cursor = data.get("cursor", 0)
                 page_count += 1
                 pbar.update(1)
 
-                await asyncio.sleep(random.uniform(2, 4))  # 防封延时
+                await asyncio.sleep(random.uniform(2, 4))  # 防封
 
         return results
 
@@ -138,6 +152,7 @@ def save_to_csv(data, keyword):
     df.to_csv(filename, index=False, encoding='utf_8_sig')
     print(f"\n✅ 保存成功：{os.path.abspath(filename)} | 共 {len(df)} 条")
 
+
 async def main():
     keyword = input("请输入搜索关键词：").strip()
     pages = int(input("请输入要爬取的页数："))
@@ -145,6 +160,7 @@ async def main():
     print(f"\n【INFO】开始爬取：关键词={keyword}，页数={pages}")
     results = await fetch_search_results(keyword, pages)
     save_to_csv(results, keyword)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
